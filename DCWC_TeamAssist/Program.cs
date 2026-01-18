@@ -15,5 +15,6 @@ builder.Services.AddSingleton<CharacterDataService>();
 builder.Services.AddScoped<UserCharacterService>();
 builder.Services.AddScoped<TeamBuilderService>();
 builder.Services.AddScoped<OcrService>();
+builder.Services.AddScoped<ImageProcessingService>();
 
 await builder.Build().RunAsync();

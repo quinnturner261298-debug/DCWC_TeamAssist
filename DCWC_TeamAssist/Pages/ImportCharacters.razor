@@ -2,9 +2,12 @@
 @using DCWC_TeamAssist.Models
 @using DCWC_TeamAssist.Services
 @using Microsoft.JSInterop
+@using SixLabors.ImageSharp
+@using SixLabors.ImageSharp.PixelFormats
 @inject OcrService OcrService
 @inject UserCharacterService UserCharacterService
 @inject CharacterDataService CharacterData
+@inject ImageProcessingService ImageProcessor
 @inject IJSRuntime JSRuntime
 @implements IDisposable
 
@@ -175,18 +178,70 @@
                 return;
             }
 
-            // Read file as base64
+            // Read file as byte array
             var buffer = new byte[file.Size];
             await file.OpenReadStream(maxAllowedSize: 10 * 1024 * 1024).ReadAsync(buffer);
             var base64 = Convert.ToBase64String(buffer);
             _imagePreview = $"data:{file.ContentType};base64,{base64}";
 
-            // Process with OCR
             _progress = 10;
             StateHasChanged();
 
-            var ocrService = new OcrService(JSRuntime, CharacterData);
-            _ocrResults = await ocrService.ProcessScreenshotAsync(_imagePreview, DotNetObjectReference.Create(ocrService));
+            // Load the image using ImageSharp
+            var rosterImage = await ImageProcessor.LoadImageFromBytes(buffer);
+            
+            _progress = 20;
+            StateHasChanged();
+
+            // Slice the roster into individual character cards
+            // Adjust parameters if needed: SliceRoster(image, columns, rows, sidebarRatio, cardAspectRatio, padding)
+            var characterCards = ImageProcessor.SliceRoster(rosterImage, columns: 7, rows: 4);
+            
+            _progress = 40;
+            StateHasChanged();
+
+            Console.WriteLine($"Sliced roster into {characterCards.Count} character cards");
+
+            // Process each card with OCR
+            var allResults = new List<OcrCharacterResult>();
+            int cardIndex = 0;
+            
+            foreach (var card in characterCards)
+            {
+                cardIndex++;
+                _progress = 40 + (int)((cardIndex / (float)characterCards.Count) * 50);
+                StateHasChanged();
+
+                try
+                {
+                    // Convert card to data URL for OCR
+                    var cardDataUrl = await ImageProcessor.ConvertToDataUrl(card);
+                    
+                    // Process with OCR
+                    var ocrService = new OcrService(JSRuntime, CharacterData);
+                    var results = await ocrService.ProcessScreenshotAsync(cardDataUrl, DotNetObjectReference.Create(ocrService));
+                    
+                    if (results.Any())
+                    {
+                        // Take the best match (highest confidence)
+                        allResults.Add(results.First());
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Error processing card {cardIndex}: {ex.Message}");
+                }
+                
+                // Dispose card to free memory
+                card.Dispose();
+            }
+
+            // Dispose the main image
+            rosterImage.Dispose();
+
+            _ocrResults = allResults
+                .OrderByDescending(r => r.Confidence)
+                .ToList();
 
             _progress = 100;
         }
