@@ -79,7 +79,16 @@ else if (_templatesReady)
                             @_progress%
                         </div>
                     </div>
-                    <p class="text-muted small">Detecting characters...</p>
+                    <p class="text-muted small">
+                        @if (!string.IsNullOrEmpty(_currentStatus))
+                        {
+                            @_currentStatus
+                        }
+                        else
+                        {
+                            <text>Detecting characters...</text>
+                        }
+                    </p>
                 </div>
             </div>
         }
@@ -164,6 +173,7 @@ else if (_templatesReady)
     private string _imagePreview = string.Empty;
     private bool _processing = false;
     private int _progress = 0;
+    private string _currentStatus = string.Empty;
     private List<CharacterDetectionResult> _results = new();
     private bool _imported = false;
     private int _importedCount = 0;
@@ -212,6 +222,7 @@ else if (_templatesReady)
         _imported = false;
         _processing = true;
         _progress = 0;
+        _currentStatus = "Reading file...";
 
         Console.WriteLine("=== AUTO-DETECT IMPORT STARTED ===");
 
@@ -228,27 +239,37 @@ else if (_templatesReady)
             }
 
             // Read file
+            _currentStatus = "Loading image...";
+            StateHasChanged();
+            await Task.Delay(1);
+            
             var buffer = new byte[file.Size];
             await file.OpenReadStream(maxAllowedSize: 10 * 1024 * 1024).ReadAsync(buffer);
             var base64 = Convert.ToBase64String(buffer);
             _imagePreview = $"data:{file.ContentType};base64,{base64}";
 
             _progress = 10;
+            _currentStatus = "Processing image...";
             StateHasChanged();
+            await Task.Delay(1); // Allow UI to update
 
             // Load image
             var rosterImage = await ImageProcessor.LoadImageFromBytes(buffer);
             Console.WriteLine($"? Image: {rosterImage.Width}x{rosterImage.Height}");
             
             _progress = 20;
+            _currentStatus = "Slicing into character cards...";
             StateHasChanged();
+            await Task.Delay(1); // Allow UI to update
 
             // Slice roster
             var characterCards = ImageProcessor.SliceRoster(rosterImage, columns: 7, rows: 4);
             Console.WriteLine($"?? Sliced into {characterCards.Count} cards");
             
             _progress = 30;
+            _currentStatus = "Loading character portraits...";
             StateHasChanged();
+            await Task.Delay(1); // Allow UI to update
 
             // Use preloaded character templates (or load if not ready yet)
             if (_templates == null || _templates.Count == 0)
@@ -262,7 +283,9 @@ else if (_templatesReady)
             }
 
             _progress = 40;
+            _currentStatus = $"Detecting characters (0/{characterCards.Count})...";
             StateHasChanged();
+            await Task.Delay(1); // Allow UI to update
 
             // Process each card
             var allResults = new List<CharacterDetectionResult>();
@@ -272,7 +295,11 @@ else if (_templatesReady)
             {
                 cardIndex++;
                 _progress = 40 + (int)((cardIndex / (float)characterCards.Count) * 50);
+                _currentStatus = $"Detecting card {cardIndex} of {characterCards.Count}...";
                 StateHasChanged();
+                
+                // CRITICAL: Yield control back to browser to prevent UI freeze
+                await Task.Delay(1);
 
                 try
                 {
@@ -294,6 +321,7 @@ else if (_templatesReady)
                         };
                         
                         allResults.Add(result);
+                        _currentStatus = $"Found: {match.CharacterName}";
                         Console.WriteLine($"   ? Card {cardIndex}: {match.CharacterName} ({match.Similarity:P0})");
                     }
                     else
@@ -310,6 +338,9 @@ else if (_templatesReady)
             }
 
             // Cleanup
+            _currentStatus = "Finalizing...";
+            StateHasChanged();
+            await Task.Delay(1);
             rosterImage.Dispose();
             foreach (var template in _templates.Values)
             {
