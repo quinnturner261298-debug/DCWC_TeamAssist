@@ -262,8 +262,8 @@ else if (_templatesReady)
             StateHasChanged();
             await Task.Delay(10); // Allow UI to update
 
-            // Slice roster
-            var characterCards = ImageProcessor.SliceRoster(rosterImage, columns: 7, rows: 4);
+            // Slice roster (8 columns × 4 rows = 32 character cards)
+            var characterCards = ImageProcessor.SliceRoster(rosterImage, columns: 8, rows: 4);
             Console.WriteLine($"?? Sliced into {characterCards.Count} cards");
             
             _progress = 30;
