@@ -2,6 +2,7 @@ using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.PixelFormats;
 using SixLabors.ImageSharp.Processing;
 using DCWC_TeamAssist.Models;
+using System.Net.Http;
 
 namespace DCWC_TeamAssist.Services;
 
@@ -12,12 +13,17 @@ public class TemplateStorageService
 {
     private readonly ImageProcessingService _imageProcessor;
     private readonly CharacterDataService _characterData;
+    private readonly HttpClient _httpClient;
     private Dictionary<string, Image<Rgba32>>? _cachedTemplates;
 
-    public TemplateStorageService(ImageProcessingService imageProcessor, CharacterDataService characterData)
+    public TemplateStorageService(
+        ImageProcessingService imageProcessor, 
+        CharacterDataService characterData,
+        HttpClient httpClient)
     {
         _imageProcessor = imageProcessor;
         _characterData = characterData;
+        _httpClient = httpClient;
     }
 
     /// <summary>
@@ -31,7 +37,7 @@ public class TemplateStorageService
             return _cachedTemplates;
         }
 
-        Console.WriteLine("?? Loading character portrait templates from app resources...");
+        Console.WriteLine("?? Loading character portrait templates from wwwroot/portraits/...");
         var templates = new Dictionary<string, Image<Rgba32>>();
         var allCharacters = _characterData.GetAllCharacters();
 
@@ -42,45 +48,37 @@ public class TemplateStorageService
                 // Try to load character portrait from wwwroot/portraits/{characterId}.png
                 var imagePath = $"portraits/{character.Id}.png";
                 
-                // For now, create a placeholder colored square for each character
-                // In production, you would bundle actual character portrait images
-                var template = CreatePlaceholderPortrait(character);
+                Console.WriteLine($"   ?? Attempting to load: {imagePath}");
+                
+                // Fetch the image from the server
+                var imageBytes = await _httpClient.GetByteArrayAsync(imagePath);
+                
+                // Load image with ImageSharp
+                var template = await _imageProcessor.LoadImageFromBytes(imageBytes);
                 templates[character.Id] = template;
                 
-                Console.WriteLine($"   ? Loaded portrait for {character.Name}");
+                Console.WriteLine($"   ? Loaded portrait for {character.Name} ({template.Width}x{template.Height})");
+            }
+            catch (HttpRequestException ex)
+            {
+                Console.WriteLine($"   ?? Portrait not found for {character.Name}: {character.Id}.png - {ex.Message}");
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"   ?? Could not load portrait for {character.Name}: {ex.Message}");
+                Console.WriteLine($"   ? Error loading portrait for {character.Name}: {ex.Message}");
             }
         }
 
-        _cachedTemplates = templates;
-        Console.WriteLine($"? Loaded {templates.Count} character portraits");
-        return templates;
-    }
+        if (templates.Count == 0)
+        {
+            Console.WriteLine("?? WARNING: No portrait images found in wwwroot/portraits/");
+            Console.WriteLine("   Please add character portrait images named: {characterId}.png");
+            Console.WriteLine($"   Example: portraits/{allCharacters.First().Id}.png");
+        }
 
-    /// <summary>
-    /// Create a placeholder portrait (unique color per character)
-    /// Replace this with actual portrait loading in production
-    /// </summary>
-    private Image<Rgba32> CreatePlaceholderPortrait(Character character)
-    {
-        // Create a 100x100 colored square as placeholder
-        var image = new Image<Rgba32>(100, 100);
-        
-        // Generate a unique color based on character ID
-        var hash = character.Id.GetHashCode();
-        var r = (byte)((hash & 0xFF0000) >> 16);
-        var g = (byte)((hash & 0x00FF00) >> 8);
-        var b = (byte)(hash & 0x0000FF);
-        
-        var color = new Rgba32(r, g, b);
-        
-        // Fill with color
-        image.Mutate(ctx => ctx.BackgroundColor(color));
-        
-        return image;
+        _cachedTemplates = templates;
+        Console.WriteLine($"? Loaded {templates.Count} character portraits from {allCharacters.Count} total characters");
+        return templates;
     }
 
     /// <summary>
@@ -101,4 +99,5 @@ public class TemplateStorageService
         return templates.Count;
     }
 }
+
 
