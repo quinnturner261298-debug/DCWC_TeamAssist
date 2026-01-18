@@ -167,42 +167,52 @@
         _processing = true;
         _progress = 0;
 
+        Console.WriteLine("=== SCREENSHOT IMPORT STARTED ===");
+
         try
         {
             var file = e.File;
+            Console.WriteLine($"?? File selected: {file.Name}");
+            Console.WriteLine($"?? File size: {file.Size / 1024:N0} KB");
+            Console.WriteLine($"?? Content type: {file.ContentType}");
             
             // Limit file size to 10MB
             if (file.Size > 10 * 1024 * 1024)
             {
+                Console.WriteLine("? ERROR: File too large (>10MB)");
                 _processing = false;
                 return;
             }
 
+            Console.WriteLine("?? Reading file into memory...");
             // Read file as byte array
             var buffer = new byte[file.Size];
             await file.OpenReadStream(maxAllowedSize: 10 * 1024 * 1024).ReadAsync(buffer);
             var base64 = Convert.ToBase64String(buffer);
             _imagePreview = $"data:{file.ContentType};base64,{base64}";
+            Console.WriteLine($"? File read successfully ({base64.Length} chars in base64)");
 
             _progress = 10;
             StateHasChanged();
 
+            Console.WriteLine("??? Loading image with ImageSharp...");
             // Load the image using ImageSharp
             var rosterImage = await ImageProcessor.LoadImageFromBytes(buffer);
+            Console.WriteLine($"? Image loaded: {rosterImage.Width}x{rosterImage.Height} pixels");
             
             _progress = 20;
             StateHasChanged();
 
+            Console.WriteLine("?? Slicing roster into individual character cards...");
             // Slice the roster into individual character cards
-            // Adjust parameters if needed: SliceRoster(image, columns, rows, sidebarRatio, cardAspectRatio, padding)
             var characterCards = ImageProcessor.SliceRoster(rosterImage, columns: 7, rows: 4);
+            Console.WriteLine($"? Sliced into {characterCards.Count} character cards");
             
             _progress = 40;
             StateHasChanged();
 
-            Console.WriteLine($"Sliced roster into {characterCards.Count} character cards");
-
             // Process each card with OCR
+            Console.WriteLine("?? Starting OCR processing on each card...");
             var allResults = new List<OcrCharacterResult>();
             int cardIndex = 0;
             
@@ -212,10 +222,13 @@
                 _progress = 40 + (int)((cardIndex / (float)characterCards.Count) * 50);
                 StateHasChanged();
 
+                Console.WriteLine($"?? Processing card {cardIndex}/{characterCards.Count} ({card.Width}x{card.Height})...");
+
                 try
                 {
                     // Convert card to data URL for OCR
                     var cardDataUrl = await ImageProcessor.ConvertToDataUrl(card);
+                    Console.WriteLine($"   ?? Card {cardIndex} converted to data URL ({cardDataUrl.Length} chars)");
                     
                     // Process with OCR
                     var ocrService = new OcrService(JSRuntime, CharacterData);
@@ -223,13 +236,19 @@
                     
                     if (results.Any())
                     {
-                        // Take the best match (highest confidence)
-                        allResults.Add(results.First());
+                        var best = results.First();
+                        Console.WriteLine($"   ? Card {cardIndex}: Detected '{best.CharacterName}' (confidence: {best.Confidence:P0}, rank: {best.Rank}, badge: {best.BadgeLevel})");
+                        allResults.Add(best);
+                    }
+                    else
+                    {
+                        Console.WriteLine($"   ?? Card {cardIndex}: No character detected");
                     }
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"Error processing card {cardIndex}: {ex.Message}");
+                    Console.WriteLine($"   ? Card {cardIndex} ERROR: {ex.Message}");
+                    Console.WriteLine($"   Stack trace: {ex.StackTrace}");
                 }
                 
                 // Dispose card to free memory
@@ -238,20 +257,33 @@
 
             // Dispose the main image
             rosterImage.Dispose();
+            Console.WriteLine("?? Cleaned up image resources");
 
             _ocrResults = allResults
                 .OrderByDescending(r => r.Confidence)
                 .ToList();
 
+            Console.WriteLine($"? OCR COMPLETE: Found {_ocrResults.Count} characters");
+            foreach (var result in _ocrResults)
+            {
+                Console.WriteLine($"   - {result.CharacterName} (confidence: {result.Confidence:P0}, rank: {result.Rank}, badge: {result.BadgeLevel})");
+            }
+
             _progress = 100;
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"Error processing file: {ex.Message}");
+            Console.WriteLine($"? FATAL ERROR in HandleFileSelected: {ex.Message}");
+            Console.WriteLine($"Stack trace: {ex.StackTrace}");
+            if (ex.InnerException != null)
+            {
+                Console.WriteLine($"Inner exception: {ex.InnerException.Message}");
+            }
         }
         finally
         {
             _processing = false;
+            Console.WriteLine("=== SCREENSHOT IMPORT FINISHED ===");
             StateHasChanged();
         }
     }
