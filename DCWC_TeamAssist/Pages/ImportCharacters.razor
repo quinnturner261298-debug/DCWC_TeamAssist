@@ -317,7 +317,7 @@ private DotNetObjectReference<ImportCharacters>? _dotNetHelper;
                 // Match against all templates
                 var match = TemplateMatcher.MatchCharacter(card, _templates);
                 
-                if (match.Similarity > 0.5) // Minimum 50% similarity threshold
+                if (match.Similarity > 0.3) // Lowered to 30% similarity threshold
                 {
                     var result = new OcrCharacterResult
                     {

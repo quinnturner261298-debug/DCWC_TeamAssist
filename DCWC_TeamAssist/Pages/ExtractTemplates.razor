@@ -1,0 +1,282 @@
+@page "/extract-templates"
+@using DCWC_TeamAssist.Services
+@using SixLabors.ImageSharp
+@using SixLabors.ImageSharp.PixelFormats
+@inject ImageProcessingService ImageProcessor
+@inject TemplateStorageService TemplateStorage
+@inject CharacterDataService CharacterData
+
+<PageTitle>Extract Templates from Roster</PageTitle>
+
+<h1>?? Extract Character Templates</h1>
+
+<p class="lead">Upload your roster screenshot and I'll slice it into individual character cards. Then you can save each one as a template!</p>
+
+<div class="alert alert-info">
+    <h5>?? How it Works:</h5>
+    <ol>
+        <li>Upload your roster screenshot below</li>
+        <li>I'll slice it into individual cards</li>
+        <li>Click on a card, select which character it is</li>
+        <li>Save it as a template for that character</li>
+        <li>Repeat for all characters!</li>
+    </ol>
+</div>
+
+<div class="card mb-4">
+    <div class="card-body">
+        <h5 class="card-title">Upload Roster Screenshot</h5>
+        <InputFile OnChange="HandleFileSelected" accept="image/*" class="form-control mb-3" />
+        
+        <div class="row g-2">
+            <div class="col-md-3">
+                <label class="form-label">Sidebar Ratio: @_sidebarRatio.ToString("P0")</label>
+                <input type="range" class="form-range" min="0.10" max="0.30" step="0.01" 
+                       @bind="_sidebarRatio" @bind:event="oninput" />
+            </div>
+            <div class="col-md-3">
+                <label class="form-label">Card Aspect: @_cardAspectRatio.ToString("F2")</label>
+                <input type="range" class="form-range" min="0.5" max="2.0" step="0.05" 
+                       @bind="_cardAspectRatio" @bind:event="oninput" />
+            </div>
+            <div class="col-md-3">
+                <label class="form-label">Padding: @_padding px</label>
+                <input type="range" class="form-range" min="0" max="20" step="1" 
+                       @bind="_padding" @bind:event="oninput" />
+            </div>
+            <div class="col-md-3">
+                <button class="btn btn-primary w-100 mt-4" @onclick="ReprocessImage" disabled="@(_imageData == null)">
+                    Re-slice with New Settings
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+@if (_processing)
+{
+    <div class="text-center my-4">
+        <div class="spinner-border text-primary" role="status">
+            <span class="visually-hidden">Processing...</span>
+        </div>
+        <p class="mt-2">Slicing roster...</p>
+    </div>
+}
+
+@if (_slicedCards.Any())
+{
+    <div class="alert alert-success">
+        <h5>? Extracted @_slicedCards.Count Character Cards</h5>
+        <p class="mb-0">Click on any card below to save it as a template for a specific character.</p>
+    </div>
+
+    <div class="row g-3">
+        @foreach (var (card, index) in _slicedCards.Select((c, i) => (c, i)))
+        {
+            <div class="col-6 col-md-4 col-lg-3 col-xl-2">
+                <div class="card @(_selectedCard == index ? "border-primary border-3" : "")">
+                    <img src="@card" class="card-img-top" alt="Card @(index + 1)" 
+                         style="cursor: pointer; height: 150px; object-fit: cover;"
+                         @onclick="() => SelectCard(index)" />
+                    <div class="card-body p-2 text-center">
+                        <small class="text-muted">Card @(index + 1)</small>
+                    </div>
+                </div>
+            </div>
+        }
+    </div>
+
+    @if (_selectedCard >= 0)
+    {
+        <div class="modal d-block" style="background-color: rgba(0,0,0,0.5);" @onclick="CloseModal">
+            <div class="modal-dialog modal-dialog-centered" @onclick:stopPropagation="true">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h5 class="modal-title">Save Card @(_selectedCard + 1) as Template</h5>
+                        <button type="button" class="btn-close" @onclick="CloseModal"></button>
+                    </div>
+                    <div class="modal-body">
+                        <div class="text-center mb-3">
+                            <img src="@_slicedCards[_selectedCard]" alt="Selected" class="img-fluid border rounded" style="max-height: 200px;" />
+                        </div>
+
+                        <label class="form-label">Which character is this?</label>
+                        <select class="form-select mb-3" @bind="_selectedCharacterId">
+                            <option value="">-- Select Character --</option>
+                            @foreach (var character in CharacterData.GetAllCharacters().OrderBy(c => c.Name))
+                            {
+                                <option value="@character.Id">@character.Name (@character.Rarity)</option>
+                            }
+                        </select>
+
+                        @if (_saving)
+                        {
+                            <div class="text-center">
+                                <div class="spinner-border spinner-border-sm text-primary" role="status">
+                                    <span class="visually-hidden">Saving...</span>
+                                </div>
+                                <span class="ms-2">Saving template...</span>
+                            </div>
+                        }
+                        else if (_saveSuccess)
+                        {
+                            <div class="alert alert-success mb-0">
+                                ? Template saved successfully!
+                            </div>
+                        }
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" @onclick="CloseModal">Cancel</button>
+                        <button type="button" class="btn btn-primary" @onclick="SaveTemplate" 
+                                disabled="@(string.IsNullOrEmpty(_selectedCharacterId) || _saving)">
+                            Save as Template
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    }
+}
+
+@code {
+    private byte[]? _imageData;
+    private bool _processing = false;
+    private List<string> _slicedCards = new();
+    private List<Image<Rgba32>> _cardImages = new();
+    
+    private float _sidebarRatio = 0.18f;
+    private float _cardAspectRatio = 1.0f;
+    private int _padding = 5;
+    
+    private int _selectedCard = -1;
+    private string _selectedCharacterId = "";
+    private bool _saving = false;
+    private bool _saveSuccess = false;
+
+    private async Task HandleFileSelected(InputFileChangeEventArgs e)
+    {
+        _slicedCards.Clear();
+        _processing = true;
+
+        try
+        {
+            var file = e.File;
+            
+            if (file.Size > 10 * 1024 * 1024)
+            {
+                _processing = false;
+                return;
+            }
+
+            _imageData = new byte[file.Size];
+            await file.OpenReadStream(maxAllowedSize: 10 * 1024 * 1024).ReadAsync(_imageData);
+
+            await ProcessImage();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error: {ex.Message}");
+        }
+        finally
+        {
+            _processing = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task ProcessImage()
+    {
+        if (_imageData == null) return;
+
+        _processing = true;
+        StateHasChanged();
+
+        try
+        {
+            // Cleanup old images
+            foreach (var img in _cardImages)
+            {
+                img.Dispose();
+            }
+            _cardImages.Clear();
+            _slicedCards.Clear();
+
+            var rosterImage = await ImageProcessor.LoadImageFromBytes(_imageData);
+            
+            var characterCards = ImageProcessor.SliceRoster(
+                rosterImage, 
+                7, 
+                4, 
+                _sidebarRatio, 
+                _cardAspectRatio, 
+                _padding
+            );
+            
+            _cardImages = characterCards;
+            _slicedCards = await ImageProcessor.ConvertCardsToDataUrls(characterCards);
+
+            rosterImage.Dispose();
+        }
+        finally
+        {
+            _processing = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task ReprocessImage()
+    {
+        await ProcessImage();
+    }
+
+    private void SelectCard(int index)
+    {
+        _selectedCard = index;
+        _saveSuccess = false;
+    }
+
+    private void CloseModal()
+    {
+        _selectedCard = -1;
+        _selectedCharacterId = "";
+        _saveSuccess = false;
+    }
+
+    private async Task SaveTemplate()
+    {
+        if (_selectedCard < 0 || string.IsNullOrEmpty(_selectedCharacterId)) return;
+
+        _saving = true;
+        _saveSuccess = false;
+        StateHasChanged();
+
+        try
+        {
+            var cardImage = _cardImages[_selectedCard];
+            await TemplateStorage.SaveTemplateAsync(_selectedCharacterId, cardImage);
+            
+            _saveSuccess = true;
+            
+            // Auto-close after 1 second
+            await Task.Delay(1000);
+            CloseModal();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error saving template: {ex.Message}");
+        }
+        finally
+        {
+            _saving = false;
+            StateHasChanged();
+        }
+    }
+
+    public void Dispose()
+    {
+        foreach (var img in _cardImages)
+        {
+            img?.Dispose();
+        }
+    }
+}
