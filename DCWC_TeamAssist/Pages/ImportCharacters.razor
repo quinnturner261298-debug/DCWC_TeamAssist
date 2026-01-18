@@ -304,13 +304,19 @@ else if (_templatesReady)
 
                 try
                 {
+                    var startTime = DateTime.Now;
+                    
                     // Detect metadata (rank, badge, rarity)
                     var metadata = MetadataDetector.DetectMetadata(card);
 
                     // Match character
                     var match = TemplateMatcher.MatchCharacter(card, _templates);
                     
-                    if (match.Similarity > 0.3)
+                    var elapsed = (DateTime.Now - startTime).TotalSeconds;
+                    
+                    // IMPORTANT: Increased threshold from 0.3 to 0.6 (60% similarity required)
+                    // This prevents false matches like Mr. Freeze when he's not in the image
+                    if (match.Similarity > 0.6)
                     {
                         var result = new CharacterDetectionResult
                         {
@@ -322,12 +328,12 @@ else if (_templatesReady)
                         };
                         
                         allResults.Add(result);
-                        _currentStatus = $"Found: {match.CharacterName}";
-                        Console.WriteLine($"   ? Card {cardIndex}: {match.CharacterName} ({match.Similarity:P0})");
+                        _currentStatus = $"Found: {match.CharacterName} ({elapsed:F1}s)";
+                        Console.WriteLine($"   ? Card {cardIndex}: {match.CharacterName} ({match.Similarity:P0}) in {elapsed:F1}s");
                     }
                     else
                     {
-                        Console.WriteLine($"   ?? Card {cardIndex}: No match ({match.Similarity:P0})");
+                        Console.WriteLine($"   ?? Card {cardIndex}: No confident match (best: {match.Similarity:P0}, took {elapsed:F1}s)");
                     }
                 }
                 catch (Exception ex)

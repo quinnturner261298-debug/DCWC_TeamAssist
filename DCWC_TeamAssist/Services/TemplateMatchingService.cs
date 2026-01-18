@@ -27,27 +27,39 @@ public class TemplateMatchingService
         Console.WriteLine($"   ?? Matching character card ({cardImage.Width}x{cardImage.Height}) against {templates.Count} templates...");
 
         var results = new List<TemplateMatchResult>();
+        double bestSimilarity = 0;
+        TemplateMatchResult? bestMatch = null;
 
         foreach (var (characterId, templateImage) in templates)
         {
             var similarity = CalculateSimilarity(cardImage, templateImage);
             
-            var character = _characterData.GetCharacterById(characterId);
-            if (character != null)
+            // Track best match as we go
+            if (similarity > bestSimilarity)
             {
-                results.Add(new TemplateMatchResult
+                bestSimilarity = similarity;
+                
+                var character = _characterData.GetCharacterById(characterId);
+                if (character != null)
                 {
-                    CharacterId = characterId,
-                    CharacterName = character.Name,
-                    Similarity = similarity,
-                    Confidence = similarity
-                });
+                    bestMatch = new TemplateMatchResult
+                    {
+                        CharacterId = characterId,
+                        CharacterName = character.Name,
+                        Similarity = similarity,
+                        Confidence = similarity
+                    };
+                }
+            }
+            
+            // OPTIMIZATION: Early exit if we find a near-perfect match (>95%)
+            if (similarity > 0.95)
+            {
+                Console.WriteLine($"   ?? Perfect match found: {bestMatch?.CharacterName} ({similarity:P1}) - skipping remaining templates");
+                break;
             }
         }
 
-        // Return best match
-        var bestMatch = results.OrderByDescending(r => r.Similarity).FirstOrDefault();
-        
         if (bestMatch != null)
         {
             Console.WriteLine($"   ? Best match: {bestMatch.CharacterName} (similarity: {bestMatch.Similarity:P1})");
@@ -61,24 +73,28 @@ public class TemplateMatchingService
     }
 
     /// <summary>
-    /// Calculate similarity between two images using normalized pixel difference
+    /// Calculate similarity between two images using optimized comparison
     /// </summary>
     private double CalculateSimilarity(Image<Rgba32> image1, Image<Rgba32> image2)
     {
-        // Resize both images to same size for comparison
-        int compareWidth = 100;
-        int compareHeight = 100;
+        // OPTIMIZATION: Resize to smaller size for faster comparison
+        // 32x32 = only 1,024 pixels vs 10,000 (10x faster!)
+        int compareWidth = 32;
+        int compareHeight = 32;
 
         var resized1 = image1.Clone(ctx => ctx.Resize(compareWidth, compareHeight));
         var resized2 = image2.Clone(ctx => ctx.Resize(compareWidth, compareHeight));
 
         double totalDifference = 0;
         int pixelCount = compareWidth * compareHeight;
+        
+        // OPTIMIZATION: Sample pixels instead of checking every single one
+        // Check every 2nd pixel for even faster comparison
+        int sampleCount = 0;
 
-        // Compare each pixel
-        for (int y = 0; y < compareHeight; y++)
+        for (int y = 0; y < compareHeight; y += 2)
         {
-            for (int x = 0; x < compareWidth; x++)
+            for (int x = 0; x < compareWidth; x += 2)
             {
                 var pixel1 = resized1[x, y];
                 var pixel2 = resized2[x, y];
@@ -90,6 +106,7 @@ public class TemplateMatchingService
 
                 double pixelDifference = Math.Sqrt(rDiff * rDiff + gDiff * gDiff + bDiff * bDiff);
                 totalDifference += pixelDifference;
+                sampleCount++;
             }
         }
 
@@ -97,7 +114,7 @@ public class TemplateMatchingService
         resized2.Dispose();
 
         // Normalize to 0-1 range (max difference would be sqrt(255^2 * 3) = ~441 per pixel)
-        double maxPossibleDifference = 441.0 * pixelCount;
+        double maxPossibleDifference = 441.0 * sampleCount;
         double normalizedDifference = totalDifference / maxPossibleDifference;
 
         // Convert to similarity (inverse of difference)
