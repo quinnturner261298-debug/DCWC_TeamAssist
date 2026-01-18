@@ -69,14 +69,14 @@ else if (_templatesReady)
             <div class="card mb-4">
                 <div class="card-body">
                     <h5 class="card-title">Processing...</h5>
-                    <div class="progress mb-2">
-                        <div class="progress-bar progress-bar-striped progress-bar-animated" 
+                    <div class="progress mb-2" style="height: 25px;">
+                        <div class="progress-bar progress-bar-striped progress-bar-animated bg-primary" 
                              role="progressbar" 
-                             style="width: @(_progress)%"
+                             style="width: @(_progress)%; transition: width 0.3s ease;"
                              aria-valuenow="@_progress" 
                              aria-valuemin="0" 
                              aria-valuemax="100">
-                            @_progress%
+                            <strong>@_progress%</strong>
                         </div>
                     </div>
                     <p class="text-muted small">
@@ -251,7 +251,7 @@ else if (_templatesReady)
             _progress = 10;
             _currentStatus = "Processing image...";
             StateHasChanged();
-            await Task.Delay(1); // Allow UI to update
+            await Task.Delay(10); // Allow UI to update
 
             // Load image
             var rosterImage = await ImageProcessor.LoadImageFromBytes(buffer);
@@ -260,7 +260,7 @@ else if (_templatesReady)
             _progress = 20;
             _currentStatus = "Slicing into character cards...";
             StateHasChanged();
-            await Task.Delay(1); // Allow UI to update
+            await Task.Delay(10); // Allow UI to update
 
             // Slice roster
             var characterCards = ImageProcessor.SliceRoster(rosterImage, columns: 7, rows: 4);
@@ -269,7 +269,7 @@ else if (_templatesReady)
             _progress = 30;
             _currentStatus = "Loading character portraits...";
             StateHasChanged();
-            await Task.Delay(1); // Allow UI to update
+            await Task.Delay(10); // Allow UI to update
 
             // Use preloaded character templates (or load if not ready yet)
             if (_templates == null || _templates.Count == 0)
@@ -285,7 +285,7 @@ else if (_templatesReady)
             _progress = 40;
             _currentStatus = $"Detecting characters (0/{characterCards.Count})...";
             StateHasChanged();
-            await Task.Delay(1); // Allow UI to update
+            await Task.Delay(10); // Allow UI to update
 
             // Process each card
             var allResults = new List<CharacterDetectionResult>();
@@ -299,7 +299,8 @@ else if (_templatesReady)
                 StateHasChanged();
                 
                 // CRITICAL: Yield control back to browser to prevent UI freeze
-                await Task.Delay(1);
+                // Increased to 10ms for better UI responsiveness
+                await Task.Delay(10);
 
                 try
                 {
