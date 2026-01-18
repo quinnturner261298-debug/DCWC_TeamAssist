@@ -16,5 +16,8 @@ builder.Services.AddScoped<UserCharacterService>();
 builder.Services.AddScoped<TeamBuilderService>();
 builder.Services.AddScoped<OcrService>();
 builder.Services.AddScoped<ImageProcessingService>();
+builder.Services.AddScoped<TemplateMatchingService>();
+builder.Services.AddScoped<TemplateStorageService>();
+builder.Services.AddScoped<CardMetadataDetector>();
 
 await builder.Build().RunAsync();

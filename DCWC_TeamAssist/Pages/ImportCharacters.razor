@@ -8,6 +8,9 @@
 @inject UserCharacterService UserCharacterService
 @inject CharacterDataService CharacterData
 @inject ImageProcessingService ImageProcessor
+@inject TemplateMatchingService TemplateMatcher
+@inject TemplateStorageService TemplateStorage
+@inject CardMetadataDetector MetadataDetector
 @inject IJSRuntime JSRuntime
 @implements IDisposable
 
@@ -18,14 +21,29 @@
 <p>Upload a screenshot of your DC Worlds Collide roster to automatically import your characters.</p>
 
 <div class="alert alert-info">
-    <h5>?? Tips for Best Results:</h5>
+    <h5>?? Recognition Methods:</h5>
     <ul>
-        <li>Take a clear screenshot of your roster screen</li>
-        <li>Ensure character names are visible</li>
-        <li>Include rank and badge level numbers if possible</li>
-        <li>Avoid blurry or dark screenshots</li>
-        <li>Full screen works best</li>
+        <li><strong>Template Matching (Recommended):</strong> Compares character portraits against your uploaded templates</li>
+        <li><strong>OCR (Text):</strong> Reads character names from text labels in the image</li>
     </ul>
+    <p class="mb-0">
+        <a href="/templates" class="alert-link">Manage Character Templates</a> to enable template matching.
+    </p>
+</div>
+
+<div class="mb-3">
+    <label class="form-label">Recognition Method:</label>
+    <div class="btn-group" role="group">
+        <input type="radio" class="btn-check" name="recognitionMode" id="modeTemplate" checked="@(_useTemplateMatching)" @onchange="() => _useTemplateMatching = true">
+        <label class="btn btn-outline-primary" for="modeTemplate">
+            ??? Template Matching @(_templatesAvailable ? $"({_templatesCount} templates)" : "(No templates)")
+        </label>
+
+        <input type="radio" class="btn-check" name="recognitionMode" id="modeOCR" checked="@(!_useTemplateMatching)" @onchange="() => _useTemplateMatching = false">
+        <label class="btn btn-outline-secondary" for="modeOCR">
+            ?? OCR (Text Recognition)
+        </label>
+    </div>
 </div>
 
 <div class="row">
@@ -146,18 +164,34 @@
 </div>
 
 @code {
-    private string _imagePreview = string.Empty;
-    private bool _processing = false;
-    private int _progress = 0;
-    private List<OcrCharacterResult> _ocrResults = new();
-    private bool _imported = false;
-    private int _importedCount = 0;
-    private DotNetObjectReference<ImportCharacters>? _dotNetHelper;
+private string _imagePreview = string.Empty;
+private bool _processing = false;
+private int _progress = 0;
+private List<OcrCharacterResult> _ocrResults = new();
+private bool _imported = false;
+private int _importedCount = 0;
+private DotNetObjectReference<ImportCharacters>? _dotNetHelper;
+    
+    // Template matching
+    private bool _useTemplateMatching = true;
+    private bool _templatesAvailable = false;
+    private int _templatesCount = 0;
+    private Dictionary<string, Image<Rgba32>>? _templates;
 
     protected override async Task OnInitializedAsync()
     {
         await UserCharacterService.InitializeAsync();
         _dotNetHelper = DotNetObjectReference.Create(this);
+        
+        // Check if templates are available
+        var templateIndex = await TemplateStorage.GetTemplateIndexAsync();
+        _templatesCount = templateIndex.Count;
+        _templatesAvailable = _templatesCount > 0;
+        
+        if (!_templatesAvailable)
+        {
+            _useTemplateMatching = false; // Fall back to OCR if no templates
+        }
     }
 
     private async Task HandleFileSelected(InputFileChangeEventArgs e)
@@ -168,6 +202,7 @@
         _progress = 0;
 
         Console.WriteLine("=== SCREENSHOT IMPORT STARTED ===");
+        Console.WriteLine($"?? Recognition method: {(_useTemplateMatching ? "Template Matching" : "OCR")}");
 
         try
         {
@@ -211,62 +246,28 @@
             _progress = 40;
             StateHasChanged();
 
-            // Process each card with OCR
-            Console.WriteLine("?? Starting OCR processing on each card...");
-            var allResults = new List<OcrCharacterResult>();
-            int cardIndex = 0;
-            
-            foreach (var card in characterCards)
+            // Choose recognition method
+            if (_useTemplateMatching && _templatesAvailable)
             {
-                cardIndex++;
-                _progress = 40 + (int)((cardIndex / (float)characterCards.Count) * 50);
-                StateHasChanged();
-
-                Console.WriteLine($"?? Processing card {cardIndex}/{characterCards.Count} ({card.Width}x{card.Height})...");
-
-                try
-                {
-                    // Convert card to data URL for OCR
-                    var cardDataUrl = await ImageProcessor.ConvertToDataUrl(card);
-                    Console.WriteLine($"   ?? Card {cardIndex} converted to data URL ({cardDataUrl.Length} chars)");
-                    
-                    // Process with OCR
-                    var ocrService = new OcrService(JSRuntime, CharacterData);
-                    var results = await ocrService.ProcessScreenshotAsync(cardDataUrl, DotNetObjectReference.Create(ocrService));
-                    
-                    if (results.Any())
-                    {
-                        var best = results.First();
-                        Console.WriteLine($"   ? Card {cardIndex}: Detected '{best.CharacterName}' (confidence: {best.Confidence:P0}, rank: {best.Rank}, badge: {best.BadgeLevel})");
-                        allResults.Add(best);
-                    }
-                    else
-                    {
-                        Console.WriteLine($"   ?? Card {cardIndex}: No character detected");
-                    }
-                }
-                catch (Exception ex)
-                {
-                    Console.WriteLine($"   ? Card {cardIndex} ERROR: {ex.Message}");
-                    Console.WriteLine($"   Stack trace: {ex.StackTrace}");
-                }
-                
-                // Dispose card to free memory
-                card.Dispose();
+                await ProcessWithTemplateMatching(characterCards);
+            }
+            else
+            {
+                await ProcessWithOCR(characterCards);
             }
 
             // Dispose the main image
             rosterImage.Dispose();
             Console.WriteLine("?? Cleaned up image resources");
 
-            _ocrResults = allResults
+            _ocrResults = _ocrResults
                 .OrderByDescending(r => r.Confidence)
                 .ToList();
 
-            Console.WriteLine($"? OCR COMPLETE: Found {_ocrResults.Count} characters");
+            Console.WriteLine($"? RECOGNITION COMPLETE: Found {_ocrResults.Count} characters");
             foreach (var result in _ocrResults)
             {
-                Console.WriteLine($"   - {result.CharacterName} (confidence: {result.Confidence:P0}, rank: {result.Rank}, badge: {result.BadgeLevel})");
+                Console.WriteLine($"   - {result.CharacterName} (confidence: {result.Confidence:P0})");
             }
 
             _progress = 100;
@@ -286,6 +287,121 @@
             Console.WriteLine("=== SCREENSHOT IMPORT FINISHED ===");
             StateHasChanged();
         }
+    }
+
+    private async Task ProcessWithTemplateMatching(List<Image<Rgba32>> characterCards)
+    {
+        Console.WriteLine("??? Using TEMPLATE MATCHING recognition...");
+        
+        // Load all templates
+        _templates = await TemplateStorage.LoadAllTemplatesAsync();
+        Console.WriteLine($"?? Loaded {_templates.Count} character templates");
+
+        var allResults = new List<OcrCharacterResult>();
+        int cardIndex = 0;
+        
+        foreach (var card in characterCards)
+        {
+            cardIndex++;
+            _progress = 40 + (int)((cardIndex / (float)characterCards.Count) * 50);
+            StateHasChanged();
+
+            Console.WriteLine($"?? Matching card {cardIndex}/{characterCards.Count}...");
+
+
+            try
+            {
+                // Extract metadata (rank, badge, rarity) from card image
+                var metadata = MetadataDetector.DetectMetadata(card);
+
+                // Match against all templates
+                var match = TemplateMatcher.MatchCharacter(card, _templates);
+                
+                if (match.Similarity > 0.5) // Minimum 50% similarity threshold
+                {
+                    var result = new OcrCharacterResult
+                    {
+                        CharacterId = match.CharacterId,
+                        CharacterName = match.CharacterName,
+                        Confidence = match.Similarity,
+                        Rank = metadata.Rank,
+                        BadgeLevel = metadata.BadgeLevel
+                    };
+                    
+                    allResults.Add(result);
+                    Console.WriteLine($"   ? Card {cardIndex}: Matched '{match.CharacterName}' (similarity: {match.Similarity:P0}, rank: {metadata.Rank}, badge: {metadata.BadgeLevel})");
+                }
+                else
+                {
+                    Console.WriteLine($"   ?? Card {cardIndex}: No confident match (best: {match.Similarity:P0})");
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"   ? Card {cardIndex} ERROR: {ex.Message}");
+            }
+            
+            // Dispose card to free memory
+            card.Dispose();
+        }
+
+        // Cleanup templates
+        foreach (var template in _templates.Values)
+        {
+            template.Dispose();
+        }
+
+        _ocrResults = allResults;
+    }
+
+    private async Task ProcessWithOCR(List<Image<Rgba32>> characterCards)
+    {
+        Console.WriteLine("?? Using OCR (text) recognition...");
+        
+        var allResults = new List<OcrCharacterResult>();
+        int cardIndex = 0;
+        
+        foreach (var card in characterCards)
+        {
+            cardIndex++;
+            _progress = 40 + (int)((cardIndex / (float)characterCards.Count) * 50);
+            StateHasChanged();
+
+            Console.WriteLine($"?? Processing card {cardIndex}/{characterCards.Count} ({card.Width}x{card.Height})...");
+
+            try
+            {
+                // Convert card to data URL for OCR
+                var cardDataUrl = await ImageProcessor.ConvertToDataUrl(card);
+                Console.WriteLine($"   ?? Card {cardIndex} converted to data URL ({cardDataUrl.Length} chars)");
+                
+                // Process with OCR
+                var ocrService = new OcrService(JSRuntime, CharacterData);
+                var results = await ocrService.ProcessScreenshotAsync(cardDataUrl, DotNetObjectReference.Create(ocrService));
+                
+                if (results.Any())
+                {
+                    var best = results.First();
+                    Console.WriteLine($"   ? Card {cardIndex}: Detected '{best.CharacterName}' (confidence: {best.Confidence:P0}, rank: {best.Rank}, badge: {best.BadgeLevel})");
+                    allResults.Add(best);
+                }
+                else
+                {
+                    Console.WriteLine($"   ?? Card {cardIndex}: No character detected");
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"   ? Card {cardIndex} ERROR: {ex.Message}");
+                Console.WriteLine($"   Stack trace: {ex.StackTrace}");
+            }
+            
+            // Dispose card to free memory
+            card.Dispose();
+        }
+
+
+        _ocrResults = allResults;
     }
 
     [JSInvokable]
