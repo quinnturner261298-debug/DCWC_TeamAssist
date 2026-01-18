@@ -1,0 +1,158 @@
+@page "/team-builder"
+@using DCWC_TeamAssist.Models
+@using DCWC_TeamAssist.Services
+@inject CharacterDataService CharacterData
+@inject UserCharacterService UserCharacterService
+@inject TeamBuilderService TeamBuilderService
+
+<PageTitle>Team Builder</PageTitle>
+
+<h1>Team Builder</h1>
+
+<p>Build the best team for each game mode based on your characters.</p>
+
+@if (!_initialized)
+{
+    <p><em>Loading...</em></p>
+}
+else
+{
+    <div class="row mb-4">
+        <div class="col-md-6">
+            <label class="form-label">Select Game Mode:</label>
+            <select @bind="_selectedGameMode" class="form-select" @bind:after="BuildTeam">
+                @foreach (GameMode mode in Enum.GetValues(typeof(GameMode)))
+                {
+                    <option value="@mode">@mode</option>
+                }
+            </select>
+        </div>
+        <div class="col-md-6">
+            <label class="form-label">Team Size:</label>
+            <input type="number" @bind="_teamSize" class="form-control" min="1" max="10" @bind:after="BuildTeam" />
+        </div>
+    </div>
+
+    @if (_currentTeam != null && _currentTeam.CharacterIds.Count > 0)
+    {
+        <div class="alert alert-info">
+            <h4>@_currentTeam.Name</h4>
+            <p><strong>Total Team Power:</strong> @_currentTeam.TotalPower</p>
+        </div>
+
+        <div class="row">
+            @foreach (var characterId in _currentTeam.CharacterIds)
+            {
+                var character = CharacterData.GetCharacterById(characterId);
+                var userChar = UserCharacterService.GetUserCharacter(characterId);
+                
+                if (character != null && userChar != null)
+                {
+                    <div class="col-md-6 col-lg-4 mb-3">
+                        <div class="card border-primary">
+                            <div class="card-body">
+                                <h5 class="card-title">@character.Name</h5>
+                                <p class="card-text">
+                                    <span class="badge bg-@(character.Rarity == CharacterRarity.Legendary ? "warning" : "primary")">
+                                        @character.Rarity
+                                    </span>
+                                    <span class="badge bg-secondary">@character.Role</span>
+                                </p>
+                                <ul class="list-unstyled">
+                                    <li><strong>Base Power:</strong> @character.Power</li>
+                                    <li><strong>Rank:</strong> @userChar.Rank / 15</li>
+                                    <li><strong>Badge:</strong> @userChar.BadgeLevel / @UserCharacterService.GetMaxBadgeLevel(character.Rarity)</li>
+                                    <li><strong>Bonus Power:</strong> @userChar.CalculatedPower</li>
+                                    <li class="text-success"><strong>Total Power:</strong> @(character.Power + userChar.CalculatedPower)</li>
+                                </ul>
+                                <hr />
+                                <p class="card-text"><small>HP: @character.Health | ATK: @character.Attack | DEF: @character.Defense</small></p>
+                                <div class="mt-2">
+                                    <strong>Abilities:</strong>
+                                    <ul class="small">
+                                        @foreach (var ability in character.Abilities)
+                                        {
+                                            <li>@ability</li>
+                                        }
+                                    </ul>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                }
+            }
+        </div>
+    }
+    else
+    {
+        <div class="alert alert-warning">
+            <p>No characters available for team building. Please add characters to your collection first.</p>
+            <a href="/characters" class="btn btn-primary">Go to My Characters</a>
+        </div>
+    }
+
+    <div class="mt-4">
+        <h3>Build Teams for All Game Modes</h3>
+        <button class="btn btn-primary" @onclick="BuildAllTeams">Build All Teams</button>
+    </div>
+
+    @if (_allTeams.Count > 0)
+    {
+        <div class="mt-4">
+            <h4>All Teams</h4>
+            @foreach (var team in _allTeams)
+            {
+                <div class="card mb-3">
+                    <div class="card-header">
+                        <h5>@team.Name (Power: @team.TotalPower)</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="d-flex flex-wrap gap-2">
+                            @foreach (var charId in team.CharacterIds)
+                            {
+                                var character = CharacterData.GetCharacterById(charId);
+                                if (character != null)
+                                {
+                                    <span class="badge bg-secondary p-2">@character.Name</span>
+                                }
+                            }
+                        </div>
+                    </div>
+                </div>
+            }
+        </div>
+    }
+}
+
+@code {
+    private bool _initialized = false;
+    private GameMode _selectedGameMode = GameMode.Arena;
+    private int _teamSize = 5;
+    private Team? _currentTeam;
+    private List<Team> _allTeams = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        await UserCharacterService.InitializeAsync();
+        _initialized = true;
+        BuildTeam();
+    }
+
+    private void BuildTeam()
+    {
+        _currentTeam = TeamBuilderService.BuildBestTeam(_selectedGameMode, _teamSize);
+    }
+
+    private void BuildAllTeams()
+    {
+        _allTeams.Clear();
+        foreach (GameMode mode in Enum.GetValues(typeof(GameMode)))
+        {
+            var team = TeamBuilderService.BuildBestTeam(mode, _teamSize);
+            if (team.CharacterIds.Count > 0)
+            {
+                _allTeams.Add(team);
+            }
+        }
+    }
+}

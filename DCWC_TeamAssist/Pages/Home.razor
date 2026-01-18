@@ -1,7 +1,56 @@
 ﻿@page "/"
 
-<PageTitle>Home</PageTitle>
+<PageTitle>DCWC Team Assist</PageTitle>
 
-<h1>Hello, world!</h1>
+<h1>DC World's Collide Team Assistant</h1>
 
-Welcome to your new app.
+<p class="lead">Build the perfect team for every game mode!</p>
+
+<div class="row mt-4">
+    <div class="col-md-6 mb-4">
+        <div class="card">
+            <div class="card-body">
+                <h5 class="card-title">📋 My Characters</h5>
+                <p class="card-text">Manage your character collection, set ranks and badge levels.</p>
+                <a href="/characters" class="btn btn-primary">Manage Characters</a>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-6 mb-4">
+        <div class="card">
+            <div class="card-body">
+                <h5 class="card-title">⚔️ Team Builder</h5>
+                <p class="card-text">Build optimized teams for each game mode based on your roster.</p>
+                <a href="/team-builder" class="btn btn-primary">Build Teams</a>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="mt-4">
+    <h3>Features</h3>
+    <ul>
+        <li>Track all your DC World's Collide characters</li>
+        <li>Set character ranks (1-15) and badge levels (Epic: 1-30, Legendary: 1-40)</li>
+        <li>Auto-generate optimal teams for different game modes:
+            <ul>
+                <li><strong>Arena/PvP:</strong> Balanced teams with tanks and DPS</li>
+                <li><strong>Raid/Boss:</strong> High damage teams with minimal support</li>
+                <li><strong>Campaign:</strong> Survival-focused teams with strong defense</li>
+            </ul>
+        </li>
+        <li>View total team power calculations</li>
+        <li>All data saved locally in your browser</li>
+    </ul>
+</div>
+
+<div class="alert alert-info mt-4">
+    <h5>Getting Started</h5>
+    <ol>
+        <li>Go to <a href="/characters" class="alert-link">My Characters</a></li>
+        <li>Add the characters you own to your collection</li>
+        <li>Set their current rank and badge level using the sliders</li>
+        <li>Visit <a href="/team-builder" class="alert-link">Team Builder</a> to generate optimal teams!</li>
+    </ol>
+</div>
+

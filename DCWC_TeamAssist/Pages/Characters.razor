@@ -1,0 +1,176 @@
+@page "/characters"
+@using DCWC_TeamAssist.Models
+@using DCWC_TeamAssist.Services
+@inject CharacterDataService CharacterData
+@inject UserCharacterService UserCharacterService
+
+<PageTitle>My Characters</PageTitle>
+
+<h1>My Characters</h1>
+
+<p>Manage your DC World's Collide character collection.</p>
+
+@if (!_initialized)
+{
+    <p><em>Loading...</em></p>
+}
+else
+{
+    <div class="row mb-3">
+        <div class="col-md-4">
+            <input @bind="_searchText" @bind:event="oninput" class="form-control" placeholder="Search characters..." />
+        </div>
+        <div class="col-md-4">
+            <select @bind="_filterRarity" class="form-select">
+                <option value="">All Rarities</option>
+                <option value="Epic">Epic</option>
+                <option value="Legendary">Legendary</option>
+            </select>
+        </div>
+        <div class="col-md-4">
+            <select @bind="_filterRole" class="form-select">
+                <option value="">All Roles</option>
+                <option value="Tank">Tank</option>
+                <option value="DPS">DPS</option>
+                <option value="Support">Support</option>
+                <option value="Healer">Healer</option>
+            </select>
+        </div>
+    </div>
+
+    <div class="row">
+        @foreach (var character in GetFilteredCharacters())
+        {
+            var userChar = UserCharacterService.GetUserCharacter(character.Id);
+            var isOwned = userChar?.IsOwned ?? false;
+            var rank = userChar?.Rank ?? 1;
+            var badge = userChar?.BadgeLevel ?? 1;
+            var maxBadge = UserCharacterService.GetMaxBadgeLevel(character.Rarity);
+
+            <div class="col-md-6 col-lg-4 mb-4">
+                <div class="card @(isOwned ? "border-success" : "")">
+                    <div class="card-body">
+                        <h5 class="card-title">
+                            @character.Name
+                            @if (isOwned)
+                            {
+                                <span class="badge bg-success">Owned</span>
+                            }
+                        </h5>
+                        <p class="card-text">
+                            <span class="badge bg-@(character.Rarity == CharacterRarity.Legendary ? "warning" : "primary")">
+                                @character.Rarity
+                            </span>
+                            <span class="badge bg-secondary">@character.Role</span>
+                        </p>
+                        <p class="card-text">
+                            <small>Power: @character.Power | HP: @character.Health | ATK: @character.Attack</small>
+                        </p>
+
+                        @if (isOwned)
+                        {
+                            <div class="mb-2">
+                                <label class="form-label">Rank: @rank</label>
+                                <input type="range" class="form-range" min="1" max="15" 
+                                       value="@rank" 
+                                       @oninput="@(e => UpdateRank(character.Id, int.Parse(e.Value?.ToString() ?? "1")))" />
+                            </div>
+                            <div class="mb-2">
+                                <label class="form-label">Badge: @badge / @maxBadge</label>
+                                <input type="range" class="form-range" min="1" max="@maxBadge" 
+                                       value="@badge" 
+                                       @oninput="@(e => UpdateBadge(character.Id, int.Parse(e.Value?.ToString() ?? "1")))" />
+                            </div>
+                            <p class="text-success"><strong>Total Power: @(character.Power + (userChar?.CalculatedPower ?? 0))</strong></p>
+                            <button class="btn btn-sm btn-danger" @onclick="() => RemoveCharacter(character.Id)">
+                                Remove
+                            </button>
+                        }
+                        else
+                        {
+                            <button class="btn btn-sm btn-success" @onclick="() => AddCharacter(character.Id)">
+                                Add to Collection
+                            </button>
+                        }
+                    </div>
+                </div>
+            </div>
+        }
+    </div>
+}
+
+@code {
+    private bool _initialized = false;
+    private string _searchText = "";
+    private string _filterRarity = "";
+    private string _filterRole = "";
+
+    protected override async Task OnInitializedAsync()
+    {
+        await UserCharacterService.InitializeAsync();
+        _initialized = true;
+    }
+
+    private List<Character> GetFilteredCharacters()
+    {
+        var characters = CharacterData.GetAllCharacters();
+
+        if (!string.IsNullOrWhiteSpace(_searchText))
+        {
+            characters = characters.Where(c => 
+                c.Name.Contains(_searchText, StringComparison.OrdinalIgnoreCase)).ToList();
+        }
+
+        if (!string.IsNullOrWhiteSpace(_filterRarity) && Enum.TryParse<CharacterRarity>(_filterRarity, out var rarity))
+        {
+            characters = characters.Where(c => c.Rarity == rarity).ToList();
+        }
+
+        if (!string.IsNullOrWhiteSpace(_filterRole) && Enum.TryParse<CharacterRole>(_filterRole, out var role))
+        {
+            characters = characters.Where(c => c.Role == role).ToList();
+        }
+
+        return characters;
+    }
+
+    private async Task AddCharacter(string characterId)
+    {
+        var character = CharacterData.GetCharacterById(characterId);
+        if (character != null)
+        {
+            await UserCharacterService.AddOrUpdateCharacterAsync(new UserCharacter
+            {
+                CharacterId = characterId,
+                Rank = 1,
+                BadgeLevel = 1,
+                IsOwned = true
+            });
+        }
+    }
+
+    private async Task RemoveCharacter(string characterId)
+    {
+        await UserCharacterService.RemoveCharacterAsync(characterId);
+    }
+
+    private async Task UpdateRank(string characterId, int rank)
+    {
+        var userChar = UserCharacterService.GetUserCharacter(characterId);
+        if (userChar != null)
+        {
+            userChar.Rank = rank;
+            await UserCharacterService.AddOrUpdateCharacterAsync(userChar);
+        }
+    }
+
+    private async Task UpdateBadge(string characterId, int badge)
+    {
+        var userChar = UserCharacterService.GetUserCharacter(characterId);
+        if (userChar != null)
+        {
+            userChar.BadgeLevel = badge;
+            await UserCharacterService.AddOrUpdateCharacterAsync(userChar);
+        }
+    }
+}
