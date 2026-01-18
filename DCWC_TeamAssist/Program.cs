@@ -14,5 +14,6 @@ builder.Services.AddScoped<LocalStorageService>();
 builder.Services.AddSingleton<CharacterDataService>();
 builder.Services.AddScoped<UserCharacterService>();
 builder.Services.AddScoped<TeamBuilderService>();
+builder.Services.AddScoped<OcrService>();
 
 await builder.Build().RunAsync();

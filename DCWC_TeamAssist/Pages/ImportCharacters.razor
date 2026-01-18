@@ -1,0 +1,248 @@
+@page "/import"
+@using DCWC_TeamAssist.Models
+@using DCWC_TeamAssist.Services
+@using Microsoft.JSInterop
+@inject OcrService OcrService
+@inject UserCharacterService UserCharacterService
+@inject CharacterDataService CharacterData
+@inject IJSRuntime JSRuntime
+@implements IDisposable
+
+<PageTitle>Import from Screenshot</PageTitle>
+
+<h1>?? Import Characters from Screenshot</h1>
+
+<p>Upload a screenshot of your DC Worlds Collide roster to automatically import your characters.</p>
+
+<div class="alert alert-info">
+    <h5>?? Tips for Best Results:</h5>
+    <ul>
+        <li>Take a clear screenshot of your roster screen</li>
+        <li>Ensure character names are visible</li>
+        <li>Include rank and badge level numbers if possible</li>
+        <li>Avoid blurry or dark screenshots</li>
+        <li>Full screen works best</li>
+    </ul>
+</div>
+
+<div class="row">
+    <div class="col-md-6">
+        <div class="card mb-4">
+            <div class="card-body">
+                <h5 class="card-title">Step 1: Upload Screenshot</h5>
+                <InputFile OnChange="HandleFileSelected" accept="image/*" class="form-control" />
+                
+                @if (!string.IsNullOrEmpty(_imagePreview))
+                {
+                    <div class="mt-3">
+                        <img src="@_imagePreview" alt="Preview" class="img-fluid border rounded" style="max-height: 400px;" />
+                    </div>
+                }
+            </div>
+        </div>
+
+        @if (_processing)
+        {
+            <div class="card mb-4">
+                <div class="card-body">
+                    <h5 class="card-title">Processing...</h5>
+                    <div class="progress">
+                        <div class="progress-bar progress-bar-striped progress-bar-animated" 
+                             role="progressbar" 
+                             style="width: @(_progress)%"
+                             aria-valuenow="@_progress" 
+                             aria-valuemin="0" 
+                             aria-valuemax="100">
+                            @_progress%
+                        </div>
+                    </div>
+                    <p class="mt-2 text-muted">Analyzing image with OCR...</p>
+                </div>
+            </div>
+        }
+    </div>
+
+    <div class="col-md-6">
+        @if (_ocrResults.Any())
+        {
+            <div class="card">
+                <div class="card-body">
+                    <h5 class="card-title">Step 2: Review Detected Characters (@_ocrResults.Count found)</h5>
+                    <p class="text-muted small">Review and adjust the detected values before importing.</p>
+
+                    <div class="list-group mb-3">
+                        @foreach (var result in _ocrResults)
+                        {
+                            var character = CharacterData.GetCharacterById(result.CharacterId);
+                            if (character != null)
+                            {
+                                var maxBadge = character.Rarity == CharacterRarity.Epic ? 30 : 40;
+                                var confidenceClass = result.Confidence > 0.8 ? "success" : result.Confidence > 0.5 ? "warning" : "danger";
+
+                                <div class="list-group-item">
+                                    <div class="d-flex justify-content-between align-items-center mb-2">
+                                        <div>
+                                            <h6 class="mb-0">@character.Name</h6>
+                                            <small class="text-muted">
+                                                <span class="badge bg-@(character.Rarity == CharacterRarity.Legendary ? "warning" : "primary")">
+                                                    @character.Rarity
+                                                </span>
+                                                <span class="badge bg-@confidenceClass">
+                                                    @((int)(result.Confidence * 100))% confidence
+                                                </span>
+                                            </small>
+                                        </div>
+                                        <button class="btn btn-sm btn-danger" @onclick="() => RemoveResult(result)">
+                                            ?
+                                        </button>
+                                    </div>
+
+                                    <div class="row g-2">
+                                        <div class="col-6">
+                                            <label class="form-label small mb-0">Rank: @result.Rank</label>
+                                            <input type="range" class="form-range" min="1" max="15" 
+                                                   @bind="result.Rank" @bind:event="oninput" />
+                                        </div>
+                                        <div class="col-6">
+                                            <label class="form-label small mb-0">Badge: @result.BadgeLevel</label>
+                                            <input type="range" class="form-range" min="1" max="@maxBadge" 
+                                                   @bind="result.BadgeLevel" @bind:event="oninput" />
+                                        </div>
+                                    </div>
+                                </div>
+                            }
+                        }
+                    </div>
+
+                    <div class="d-grid gap-2">
+                        <button class="btn btn-success btn-lg" @onclick="ImportCharactersToCollection" disabled="@(!_ocrResults.Any())">
+                            Import @_ocrResults.Count Character(s)
+                        </button>
+                        <button class="btn btn-outline-secondary" @onclick="ClearResults">
+                            Clear Results
+                        </button>
+                    </div>
+                </div>
+            </div>
+        }
+
+        @if (_imported)
+        {
+            <div class="alert alert-success mt-3">
+                <h5>? Import Successful!</h5>
+                <p>@_importedCount character(s) have been added to your collection.</p>
+                <a href="/characters" class="btn btn-primary">View My Characters</a>
+            </div>
+        }
+    </div>
+</div>
+
+<div class="mt-4">
+    <h4>Alternative: Manual Entry</h4>
+    <p>If OCR doesn't work well, you can always <a href="/characters">manually add characters</a> to your collection.</p>
+</div>
+
+@code {
+    private string _imagePreview = string.Empty;
+    private bool _processing = false;
+    private int _progress = 0;
+    private List<OcrCharacterResult> _ocrResults = new();
+    private bool _imported = false;
+    private int _importedCount = 0;
+    private DotNetObjectReference<ImportCharacters>? _dotNetHelper;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await UserCharacterService.InitializeAsync();
+        _dotNetHelper = DotNetObjectReference.Create(this);
+    }
+
+    private async Task HandleFileSelected(InputFileChangeEventArgs e)
+    {
+        _ocrResults.Clear();
+        _imported = false;
+        _processing = true;
+        _progress = 0;
+
+        try
+        {
+            var file = e.File;
+            
+            // Limit file size to 10MB
+            if (file.Size > 10 * 1024 * 1024)
+            {
+                _processing = false;
+                return;
+            }
+
+            // Read file as base64
+            var buffer = new byte[file.Size];
+            await file.OpenReadStream(maxAllowedSize: 10 * 1024 * 1024).ReadAsync(buffer);
+            var base64 = Convert.ToBase64String(buffer);
+            _imagePreview = $"data:{file.ContentType};base64,{base64}";
+
+            // Process with OCR
+            _progress = 10;
+            StateHasChanged();
+
+            var ocrService = new OcrService(JSRuntime, CharacterData);
+            _ocrResults = await ocrService.ProcessScreenshotAsync(_imagePreview, DotNetObjectReference.Create(ocrService));
+
+            _progress = 100;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error processing file: {ex.Message}");
+        }
+        finally
+        {
+            _processing = false;
+            StateHasChanged();
+        }
+    }
+
+    [JSInvokable]
+    public Task UpdateProgress(int progress)
+    {
+        _progress = progress;
+        StateHasChanged();
+        return Task.CompletedTask;
+    }
+
+    private void RemoveResult(OcrCharacterResult result)
+    {
+        _ocrResults.Remove(result);
+    }
+
+    private void ClearResults()
+    {
+        _ocrResults.Clear();
+        _imagePreview = string.Empty;
+        _imported = false;
+    }
+
+    private async Task ImportCharactersToCollection()
+    {
+        _importedCount = 0;
+
+        foreach (var result in _ocrResults)
+        {
+            await UserCharacterService.AddOrUpdateCharacterAsync(new UserCharacter
+            {
+                CharacterId = result.CharacterId,
+                Rank = result.Rank,
+                BadgeLevel = result.BadgeLevel,
+                IsOwned = true
+            });
+            _importedCount++;
+        }
+
+        _imported = true;
+        _ocrResults.Clear();
+    }
+
+    public void Dispose()
+    {
+        _dotNetHelper?.Dispose();
+    }
+}
