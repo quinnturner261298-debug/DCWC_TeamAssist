@@ -19,6 +19,24 @@
 
 <p class="lead">Upload a screenshot of your roster and I'll automatically detect all your characters!</p>
 
+@if (_preloadingTemplates)
+{
+    <div class="alert alert-info">
+        <div class="d-flex align-items-center">
+            <div class="spinner-border spinner-border-sm me-2" role="status">
+                <span class="visually-hidden">Loading...</span>
+            </div>
+            <span>Loading character portraits... (@_templatesLoaded / @_totalTemplates)</span>
+        </div>
+    </div>
+}
+else if (_templatesReady)
+{
+    <div class="alert alert-success">
+        ? Ready! All @_totalTemplates character portraits preloaded for instant matching.
+    </div>
+}
+
 <div class="alert alert-info">
     <h5>?? How it Works:</h5>
     <ul>
@@ -151,11 +169,41 @@
     private int _importedCount = 0;
     private DotNetObjectReference<ImportCharacters>? _dotNetHelper;
     private Dictionary<string, Image<Rgba32>>? _templates;
+    
+    // Preloading state
+    private bool _preloadingTemplates = false;
+    private bool _templatesReady = false;
+    private int _templatesLoaded = 0;
+    private int _totalTemplates = 59;
 
     protected override async Task OnInitializedAsync()
     {
         await UserCharacterService.InitializeAsync();
         _dotNetHelper = DotNetObjectReference.Create(this);
+        
+        // Preload character portraits
+        _preloadingTemplates = true;
+        StateHasChanged();
+        
+        Console.WriteLine("?? Preloading character portraits...");
+        
+        try
+        {
+            _templates = await TemplateStorage.LoadAllTemplatesAsync();
+            _templatesLoaded = _templates.Count;
+            _totalTemplates = _templates.Count;
+            _templatesReady = true;
+            _preloadingTemplates = false;
+            
+            Console.WriteLine($"? Preloaded {_templates.Count} character portraits - ready for instant matching!");
+            StateHasChanged();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"?? Error preloading portraits: {ex.Message}");
+            _preloadingTemplates = false;
+            StateHasChanged();
+        }
     }
 
     private async Task HandleFileSelected(InputFileChangeEventArgs e)
@@ -202,9 +250,16 @@
             _progress = 30;
             StateHasChanged();
 
-            // Load character templates
-            _templates = await TemplateStorage.LoadAllTemplatesAsync();
-            Console.WriteLine($"?? Loaded {_templates.Count} character portraits");
+            // Use preloaded character templates (or load if not ready yet)
+            if (_templates == null || _templates.Count == 0)
+            {
+                Console.WriteLine("?? Templates not preloaded yet, loading now...");
+                _templates = await TemplateStorage.LoadAllTemplatesAsync();
+            }
+            else
+            {
+                Console.WriteLine($"? Using preloaded templates ({_templates.Count} characters) - instant matching!");
+            }
 
             _progress = 40;
             StateHasChanged();
