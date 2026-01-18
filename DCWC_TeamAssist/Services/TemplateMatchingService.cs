@@ -25,6 +25,7 @@ public class TemplateMatchingService
     public TemplateMatchResult MatchCharacter(Image<Rgba32> cardImage, Dictionary<string, Image<Rgba32>> templates)
     {
         Console.WriteLine($"   ?? Matching character card ({cardImage.Width}x{cardImage.Height}) against {templates.Count} templates...");
+        Console.WriteLine($"   ?? Using CENTER-WEIGHTED matching (focuses on face, ignores background color)");
 
         var results = new List<TemplateMatchResult>();
         double bestSimilarity = 0;
@@ -73,7 +74,8 @@ public class TemplateMatchingService
     }
 
     /// <summary>
-    /// Calculate similarity between two images using optimized comparison
+    /// Calculate similarity between two images using center-weighted comparison
+    /// Focuses on the center (character face) and ignores edges (background color)
     /// </summary>
     private double CalculateSimilarity(Image<Rgba32> image1, Image<Rgba32> image2)
     {
@@ -85,13 +87,16 @@ public class TemplateMatchingService
         var resized1 = image1.Clone(ctx => ctx.Resize(compareWidth, compareHeight));
         var resized2 = image2.Clone(ctx => ctx.Resize(compareWidth, compareHeight));
 
-        double totalDifference = 0;
-        int pixelCount = compareWidth * compareHeight;
+        double totalWeightedDifference = 0;
+        double totalWeight = 0;
         
-        // OPTIMIZATION: Sample pixels instead of checking every single one
-        // Check every 2nd pixel for even faster comparison
-        int sampleCount = 0;
+        // CRITICAL FIX: Focus on CENTER where character face is
+        // Calculate distance from center for each pixel
+        int centerX = compareWidth / 2;
+        int centerY = compareHeight / 2;
+        double maxDistanceFromCenter = Math.Sqrt(centerX * centerX + centerY * centerY);
 
+        // OPTIMIZATION: Sample pixels instead of checking every single one
         for (int y = 0; y < compareHeight; y += 2)
         {
             for (int x = 0; x < compareWidth; x += 2)
@@ -99,14 +104,26 @@ public class TemplateMatchingService
                 var pixel1 = resized1[x, y];
                 var pixel2 = resized2[x, y];
 
+                // Calculate distance from center
+                double dx = x - centerX;
+                double dy = y - centerY;
+                double distanceFromCenter = Math.Sqrt(dx * dx + dy * dy);
+                
+                // WEIGHT: Center pixels get MORE weight, edge pixels get LESS weight
+                // This ignores the colored background at edges and focuses on the face in center
+                double weight = 1.0 - (distanceFromCenter / maxDistanceFromCenter);
+                weight = Math.Pow(weight, 2); // Square it to emphasize center even more
+                
                 // Calculate color difference (Euclidean distance in RGB space)
                 double rDiff = pixel1.R - pixel2.R;
                 double gDiff = pixel1.G - pixel2.G;
                 double bDiff = pixel1.B - pixel2.B;
 
                 double pixelDifference = Math.Sqrt(rDiff * rDiff + gDiff * gDiff + bDiff * bDiff);
-                totalDifference += pixelDifference;
-                sampleCount++;
+                
+                // Apply weight to this pixel's contribution
+                totalWeightedDifference += pixelDifference * weight;
+                totalWeight += weight;
             }
         }
 
@@ -114,8 +131,8 @@ public class TemplateMatchingService
         resized2.Dispose();
 
         // Normalize to 0-1 range (max difference would be sqrt(255^2 * 3) = ~441 per pixel)
-        double maxPossibleDifference = 441.0 * sampleCount;
-        double normalizedDifference = totalDifference / maxPossibleDifference;
+        double maxPossibleDifference = 441.0 * totalWeight;
+        double normalizedDifference = totalWeightedDifference / maxPossibleDifference;
 
         // Convert to similarity (inverse of difference)
         double similarity = 1.0 - normalizedDifference;
