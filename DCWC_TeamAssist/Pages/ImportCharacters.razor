@@ -46,6 +46,9 @@ else if (_templatesReady)
         <li>? Extracts rank (stars) and badge level</li>
         <li>? Review and import to your collection</li>
     </ul>
+    <p class="mb-0">
+        <strong>Note:</strong> Cards without matching portraits will be skipped. Duplicate characters are automatically detected and only counted once.
+    </p>
 </div>
 
 <div class="row">
@@ -289,6 +292,7 @@ else if (_templatesReady)
 
             // Process each card
             var allResults = new List<CharacterDetectionResult>();
+            var detectedCharacterIds = new HashSet<string>(); // Track duplicates
             int cardIndex = 0;
             
             foreach (var card in characterCards)
@@ -318,22 +322,33 @@ else if (_templatesReady)
                     // This prevents false matches like Mr. Freeze when he's not in the image
                     if (match.Similarity > 0.6)
                     {
-                        var result = new CharacterDetectionResult
+                        // Check for duplicate
+                        if (detectedCharacterIds.Contains(match.CharacterId))
                         {
-                            CharacterId = match.CharacterId,
-                            CharacterName = match.CharacterName,
-                            Confidence = match.Similarity,
-                            Rank = metadata.Rank,
-                            BadgeLevel = metadata.BadgeLevel
-                        };
-                        
-                        allResults.Add(result);
-                        _currentStatus = $"Found: {match.CharacterName} ({elapsed:F1}s)";
-                        Console.WriteLine($"   ? Card {cardIndex}: {match.CharacterName} ({match.Similarity:P0}) in {elapsed:F1}s");
+                            Console.WriteLine($"   ?? Card {cardIndex}: Duplicate {match.CharacterName} detected - skipping");
+                            _currentStatus = $"Duplicate: {match.CharacterName} (skipped)";
+                        }
+                        else
+                        {
+                            var result = new CharacterDetectionResult
+                            {
+                                CharacterId = match.CharacterId,
+                                CharacterName = match.CharacterName,
+                                Confidence = match.Similarity,
+                                Rank = metadata.Rank,
+                                BadgeLevel = metadata.BadgeLevel
+                            };
+                            
+                            allResults.Add(result);
+                            detectedCharacterIds.Add(match.CharacterId); // Mark as detected
+                            _currentStatus = $"Found: {match.CharacterName} ({elapsed:F1}s)";
+                            Console.WriteLine($"   ? Card {cardIndex}: {match.CharacterName} ({match.Similarity:P0}) in {elapsed:F1}s");
+                        }
                     }
                     else
                     {
-                        Console.WriteLine($"   ?? Card {cardIndex}: No confident match (best: {match.Similarity:P0}, took {elapsed:F1}s)");
+                        // No match found - likely a character without a portrait template
+                        Console.WriteLine($"   ?? Card {cardIndex}: No match (best: {match.Similarity:P0}) - may be missing portrait template");
                     }
                 }
                 catch (Exception ex)
@@ -343,6 +358,7 @@ else if (_templatesReady)
                 
                 card.Dispose();
             }
+
 
             // Cleanup
             _currentStatus = "Finalizing...";
@@ -355,7 +371,10 @@ else if (_templatesReady)
             }
 
             _results = allResults.OrderByDescending(r => r.Confidence).ToList();
-            Console.WriteLine($"? COMPLETE: Found {_results.Count} characters");
+            
+            int skippedCards = characterCards.Count - allResults.Count;
+            Console.WriteLine($"? COMPLETE: Found {_results.Count} unique characters");
+            Console.WriteLine($"   ?? Skipped {skippedCards} cards (no match or missing portrait)");
 
             _progress = 100;
         }
