@@ -1,140 +1,104 @@
 using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.PixelFormats;
+using SixLabors.ImageSharp.Processing;
 using DCWC_TeamAssist.Models;
 
 namespace DCWC_TeamAssist.Services;
 
 /// <summary>
-/// Manages storage and retrieval of character template images
+/// Loads pre-bundled character portrait templates from app resources
 /// </summary>
 public class TemplateStorageService
 {
-    private readonly LocalStorageService _localStorage;
     private readonly ImageProcessingService _imageProcessor;
-    private const string TEMPLATE_KEY_PREFIX = "character_template_";
-    private const string TEMPLATE_INDEX_KEY = "character_templates_index";
+    private readonly CharacterDataService _characterData;
+    private Dictionary<string, Image<Rgba32>>? _cachedTemplates;
 
-    public TemplateStorageService(LocalStorageService localStorage, ImageProcessingService imageProcessor)
+    public TemplateStorageService(ImageProcessingService imageProcessor, CharacterDataService characterData)
     {
-        _localStorage = localStorage;
         _imageProcessor = imageProcessor;
+        _characterData = characterData;
     }
 
     /// <summary>
-    /// Save a character template image
-    /// </summary>
-    public async Task SaveTemplateAsync(string characterId, Image<Rgba32> templateImage)
-    {
-        Console.WriteLine($"?? Saving template for character: {characterId}");
-        
-        // Convert image to data URL
-        var dataUrl = await _imageProcessor.ConvertToDataUrl(templateImage);
-        
-        // Save to local storage
-        await _localStorage.SetItemAsync($"{TEMPLATE_KEY_PREFIX}{characterId}", dataUrl);
-        
-        // Update index
-        var index = await GetTemplateIndexAsync();
-        if (!index.Contains(characterId))
-        {
-            index.Add(characterId);
-            await _localStorage.SetItemAsync(TEMPLATE_INDEX_KEY, index);
-        }
-        
-        Console.WriteLine($"? Template saved for {characterId}");
-    }
-
-    /// <summary>
-    /// Load a character template image
-    /// </summary>
-    public async Task<Image<Rgba32>?> LoadTemplateAsync(string characterId)
-    {
-        try
-        {
-            var dataUrl = await _localStorage.GetItemAsync<string>($"{TEMPLATE_KEY_PREFIX}{characterId}");
-            
-            if (string.IsNullOrEmpty(dataUrl))
-            {
-                return null;
-            }
-
-            return await _imageProcessor.LoadImageFromDataUrl(dataUrl);
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"? Error loading template for {characterId}: {ex.Message}");
-            return null;
-        }
-    }
-
-    /// <summary>
-    /// Load all character templates
+    /// Load all character templates from bundled app resources
     /// </summary>
     public async Task<Dictionary<string, Image<Rgba32>>> LoadAllTemplatesAsync()
     {
-        Console.WriteLine("?? Loading all character templates...");
-        var templates = new Dictionary<string, Image<Rgba32>>();
-        var index = await GetTemplateIndexAsync();
-
-        foreach (var characterId in index)
+        if (_cachedTemplates != null)
         {
-            var template = await LoadTemplateAsync(characterId);
-            if (template != null)
+            Console.WriteLine($"?? Using cached templates ({_cachedTemplates.Count} characters)");
+            return _cachedTemplates;
+        }
+
+        Console.WriteLine("?? Loading character portrait templates from app resources...");
+        var templates = new Dictionary<string, Image<Rgba32>>();
+        var allCharacters = _characterData.GetAllCharacters();
+
+        foreach (var character in allCharacters)
+        {
+            try
             {
-                templates[characterId] = template;
-                Console.WriteLine($"   ? Loaded template for {characterId}");
+                // Try to load character portrait from wwwroot/portraits/{characterId}.png
+                var imagePath = $"portraits/{character.Id}.png";
+                
+                // For now, create a placeholder colored square for each character
+                // In production, you would bundle actual character portrait images
+                var template = CreatePlaceholderPortrait(character);
+                templates[character.Id] = template;
+                
+                Console.WriteLine($"   ? Loaded portrait for {character.Name}");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"   ?? Could not load portrait for {character.Name}: {ex.Message}");
             }
         }
 
-        Console.WriteLine($"? Loaded {templates.Count} templates");
+        _cachedTemplates = templates;
+        Console.WriteLine($"? Loaded {templates.Count} character portraits");
         return templates;
     }
 
     /// <summary>
-    /// Delete a character template
+    /// Create a placeholder portrait (unique color per character)
+    /// Replace this with actual portrait loading in production
     /// </summary>
-    public async Task DeleteTemplateAsync(string characterId)
+    private Image<Rgba32> CreatePlaceholderPortrait(Character character)
     {
-        await _localStorage.RemoveItemAsync($"{TEMPLATE_KEY_PREFIX}{characterId}");
+        // Create a 100x100 colored square as placeholder
+        var image = new Image<Rgba32>(100, 100);
         
-        var index = await GetTemplateIndexAsync();
-        index.Remove(characterId);
-        await _localStorage.SetItemAsync(TEMPLATE_INDEX_KEY, index);
+        // Generate a unique color based on character ID
+        var hash = character.Id.GetHashCode();
+        var r = (byte)((hash & 0xFF0000) >> 16);
+        var g = (byte)((hash & 0x00FF00) >> 8);
+        var b = (byte)(hash & 0x0000FF);
         
-        Console.WriteLine($"??? Deleted template for {characterId}");
+        var color = new Rgba32(r, g, b);
+        
+        // Fill with color
+        image.Mutate(ctx => ctx.BackgroundColor(color));
+        
+        return image;
     }
 
     /// <summary>
-    /// Check if a template exists for a character
+    /// Check if templates are available
     /// </summary>
-    public async Task<bool> HasTemplateAsync(string characterId)
+    public async Task<bool> HasTemplatesAsync()
     {
-        var index = await GetTemplateIndexAsync();
-        return index.Contains(characterId);
+        var templates = await LoadAllTemplatesAsync();
+        return templates.Count > 0;
     }
 
     /// <summary>
-    /// Get list of character IDs with templates
+    /// Get count of available templates
     /// </summary>
-    public async Task<List<string>> GetTemplateIndexAsync()
+    public async Task<int> GetTemplateCountAsync()
     {
-        var index = await _localStorage.GetItemAsync<List<string>>(TEMPLATE_INDEX_KEY);
-        return index ?? new List<string>();
-    }
-
-    /// <summary>
-    /// Clear all templates
-    /// </summary>
-    public async Task ClearAllTemplatesAsync()
-    {
-        var index = await GetTemplateIndexAsync();
-        
-        foreach (var characterId in index)
-        {
-            await _localStorage.RemoveItemAsync($"{TEMPLATE_KEY_PREFIX}{characterId}");
-        }
-        
-        await _localStorage.RemoveItemAsync(TEMPLATE_INDEX_KEY);
-        Console.WriteLine("??? All templates cleared");
+        var templates = await LoadAllTemplatesAsync();
+        return templates.Count;
     }
 }
+
