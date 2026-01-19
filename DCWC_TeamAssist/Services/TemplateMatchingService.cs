@@ -1,4 +1,4 @@
-using SixLabors.ImageSharp;
+﻿using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.PixelFormats;
 using SixLabors.ImageSharp.Processing;
 using System.Security.Cryptography;
@@ -24,8 +24,8 @@ public class TemplateMatchingService
     /// </summary>
     public TemplateMatchResult MatchCharacter(Image<Rgba32> cardImage, Dictionary<string, Image<Rgba32>> templates)
     {
-        Console.WriteLine($"   ?? Matching character card ({cardImage.Width}x{cardImage.Height}) against {templates.Count} templates...");
-        Console.WriteLine($"   ?? Using CENTER-WEIGHTED matching (focuses on face, ignores background color)");
+        Console.WriteLine($"   🔍 Matching character card against {templates.Count} templates...");
+        Console.WriteLine($"   ✂️ Cropping to center 60% (removes colored background edges)");
 
         var results = new List<TemplateMatchResult>();
         double bestSimilarity = 0;
@@ -53,91 +53,95 @@ public class TemplateMatchingService
                 }
             }
             
-            // OPTIMIZATION: Early exit if we find a near-perfect match (>95%)
-            if (similarity > 0.95)
+            // OPTIMIZATION: Early exit if we find a near-perfect match (>90%)
+            if (similarity > 0.90)
             {
-                Console.WriteLine($"   ?? Perfect match found: {bestMatch?.CharacterName} ({similarity:P1}) - skipping remaining templates");
+                Console.WriteLine($"   🎯 Excellent match found: {bestMatch?.CharacterName} ({similarity:P1}) - skipping remaining templates");
                 break;
             }
         }
 
         if (bestMatch != null)
         {
-            Console.WriteLine($"   ? Best match: {bestMatch.CharacterName} (similarity: {bestMatch.Similarity:P1})");
+            Console.WriteLine($"   ✅ Best match: {bestMatch.CharacterName} ({bestMatch.Similarity:P1})");
         }
         else
         {
-            Console.WriteLine($"   ?? No match found");
+            Console.WriteLine($"   ⚠️ No match found");
         }
 
         return bestMatch ?? new TemplateMatchResult { CharacterId = "", CharacterName = "Unknown", Similarity = 0 };
     }
 
     /// <summary>
-    /// Calculate similarity between two images using center-weighted comparison
-    /// Focuses on the center (character face) and ignores edges (background color)
+    /// Calculate similarity by CROPPING to center (removes background) then comparing
+    /// Much faster and more accurate than weighted comparison
     /// </summary>
     private double CalculateSimilarity(Image<Rgba32> image1, Image<Rgba32> image2)
     {
-        // OPTIMIZATION: Resize to smaller size for faster comparison
-        // 32x32 = only 1,024 pixels vs 10,000 (10x faster!)
-        int compareWidth = 32;
-        int compareHeight = 32;
-
-        var resized1 = image1.Clone(ctx => ctx.Resize(compareWidth, compareHeight));
-        var resized2 = image2.Clone(ctx => ctx.Resize(compareWidth, compareHeight));
-
-        double totalWeightedDifference = 0;
-        double totalWeight = 0;
+        // CRITICAL OPTIMIZATION: Crop to CENTER 60% of image (removes colored backgrounds!)
+        // This is MUCH faster than weighted comparison
         
-        // CRITICAL FIX: Focus on CENTER where character face is
-        // Calculate distance from center for each pixel
-        int centerX = compareWidth / 2;
-        int centerY = compareHeight / 2;
-        double maxDistanceFromCenter = Math.Sqrt(centerX * centerX + centerY * centerY);
+        var centerCrop1 = CropToCenter(image1, 0.6f);
+        var centerCrop2 = CropToCenter(image2, 0.6f);
+        
+        // Now resize the CROPPED centers to small size for fast comparison
+        int compareSize = 24; // Even smaller! 24x24 = only 576 pixels
+        
+        var resized1 = centerCrop1.Clone(ctx => ctx.Resize(compareSize, compareSize));
+        var resized2 = centerCrop2.Clone(ctx => ctx.Resize(compareSize, compareSize));
+        
+        centerCrop1.Dispose();
+        centerCrop2.Dispose();
 
-        // OPTIMIZATION: Sample pixels instead of checking every single one
-        for (int y = 0; y < compareHeight; y += 2)
+        double totalDifference = 0;
+        int pixelCount = 0;
+
+        // Simple comparison - no complex weighting needed!
+        for (int y = 0; y < compareSize; y += 2) // Sample every 2nd pixel
         {
-            for (int x = 0; x < compareWidth; x += 2)
+            for (int x = 0; x < compareSize; x += 2)
             {
                 var pixel1 = resized1[x, y];
                 var pixel2 = resized2[x, y];
 
-                // Calculate distance from center
-                double dx = x - centerX;
-                double dy = y - centerY;
-                double distanceFromCenter = Math.Sqrt(dx * dx + dy * dy);
-                
-                // WEIGHT: Center pixels get MORE weight, edge pixels get LESS weight
-                // This ignores the colored background at edges and focuses on the face in center
-                double weight = 1.0 - (distanceFromCenter / maxDistanceFromCenter);
-                weight = Math.Pow(weight, 2); // Square it to emphasize center even more
-                
-                // Calculate color difference (Euclidean distance in RGB space)
+                // Simple Euclidean distance
                 double rDiff = pixel1.R - pixel2.R;
                 double gDiff = pixel1.G - pixel2.G;
                 double bDiff = pixel1.B - pixel2.B;
 
-                double pixelDifference = Math.Sqrt(rDiff * rDiff + gDiff * gDiff + bDiff * bDiff);
-                
-                // Apply weight to this pixel's contribution
-                totalWeightedDifference += pixelDifference * weight;
-                totalWeight += weight;
+                totalDifference += Math.Sqrt(rDiff * rDiff + gDiff * gDiff + bDiff * bDiff);
+                pixelCount++;
             }
         }
 
         resized1.Dispose();
         resized2.Dispose();
 
-        // Normalize to 0-1 range (max difference would be sqrt(255^2 * 3) = ~441 per pixel)
-        double maxPossibleDifference = 441.0 * totalWeight;
-        double normalizedDifference = totalWeightedDifference / maxPossibleDifference;
-
-        // Convert to similarity (inverse of difference)
-        double similarity = 1.0 - normalizedDifference;
-
-        return Math.Max(0, Math.Min(1, similarity)); // Clamp to 0-1
+        // Normalize (max difference = 441 per pixel)
+        double similarity = 1.0 - (totalDifference / (441.0 * pixelCount));
+        
+        return Math.Max(0, Math.Min(1, similarity));
+    }
+    
+    /// <summary>
+    /// Crop image to center percentage (removes edges/background)
+    /// </summary>
+    private Image<Rgba32> CropToCenter(Image<Rgba32> image, float centerPercent)
+    {
+        int width = image.Width;
+        int height = image.Height;
+        
+        // Calculate crop dimensions (take center X% of image)
+        int cropWidth = (int)(width * centerPercent);
+        int cropHeight = (int)(height * centerPercent);
+        
+        // Calculate starting position to center the crop
+        int startX = (width - cropWidth) / 2;
+        int startY = (height - cropHeight) / 2;
+        
+        // Crop to center
+        return image.Clone(ctx => ctx.Crop(new Rectangle(startX, startY, cropWidth, cropHeight)));
     }
 
     /// <summary>
